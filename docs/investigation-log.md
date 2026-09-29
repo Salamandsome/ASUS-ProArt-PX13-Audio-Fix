@@ -12,6 +12,8 @@ that is still outstanding, read [kernel-fix-plan.md](kernel-fix-plan.md).
   service, install script, repo restructure.
 - **2026-08-05**: the audible boot failure is rare; bus reset service demoted
   to opt-in.
+- **2026-09-29**: rebuild hook failed on 7.3 and on a gcc-built LTS kernel;
+  source and hook fixed.
 
 Paths under `temp/` were scratch working files: kernel sources, ACPI decompiles
 and captured logs. That directory is gitignored and its contents are not part of
@@ -820,3 +822,39 @@ Demoted accordingly, same day:
 - README step 7 rewritten as the optional workaround, analysis.md conclusion
   softened to match: what separates a broken boot from a clean one is not
   known.
+
+## 2026-09-29 rebuild hook fails on 7.3 and on the LTS kernel
+
+After a pacman transaction the hook reported:
+
+    tas2783: build FAILED for 6.18.52-1-cachyos-lts - stock module (mono mix) stays active
+    tas2783: installed patched module for 7.2.8-1-cachyos
+    tas2783: build FAILED for 7.3.0-rc4-1-cachyos-rc - stock module (mono mix) stays active
+
+The machine was booted into 7.3.0-rc4, so it was running the stock driver. The
+hook discarded the compiler output; rebuilding by hand showed two unrelated
+causes:
+
+- 7.3.0-rc4: `sdca_parse_function()` dropped its `struct sdw_slave *`
+  argument in 7.3 (`include/sound/sdca_function.h`, compared between the 7.2.8
+  and 7.3.0-rc4 headers), so the call in `tas_sdw_probe()` no longer compiled.
+- 6.18.52 LTS: this kernel is gcc-built (`CONFIG_CC_IS_GCC=y`), but the hook
+  always passed `LLVM=1`, and clang rejected the gcc-only kernel flags
+  (`-mpreferred-stack-boundary=3`, `-fconserve-stack`, ...). With the compiler
+  corrected it still fails, because the driver uses 7.2 APIs that 6.18 lacks:
+  `sdca_regmap_write_init`, the 4-argument `devm_regmap_init_sdw_mbq_cfg`, and
+  a SoundWire `remove` callback returning `void` (it returns `int` in 6.18).
+  7.2 was already the documented minimum.
+
+Fixes, same day:
+
+- The `sdca_parse_function()` call is guarded on `LINUX_VERSION_CODE`, so the
+  one source builds on 7.2 and 7.3.
+- The hook and `install.sh` pass `LLVM=1` only when the kernel's `.config` has
+  `CONFIG_CC_IS_CLANG=y`.
+- The hook skips kernels older than 7.2 instead of reporting a failure, and
+  keeps each build's output in `/var/log/tas2783-build-<kver>.log`;
+  `--uninstall` removes those logs.
+
+Verified: the module builds against 7.2.8 and 7.3.0-rc4. Loading it and a
+listening test on 7.3 were still to be done at the time of writing.
