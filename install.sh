@@ -681,6 +681,8 @@ do_uninstall() {
 
     systemctl --user daemon-reload
     sudo rm -rf "$SRC_INSTALL_DIR"
+    # Build logs the rebuild hook leaves behind, one per kernel.
+    sudo rm -f /var/log/tas2783-build-*.log
 
     # Every installed kernel may have a copy, not just the running one.
     local moddir kver
