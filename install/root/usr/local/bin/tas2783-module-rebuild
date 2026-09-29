@@ -5,7 +5,8 @@
 # after kernel or kernel-headers upgrades; safe to run manually as root.
 #
 # Sources live in /usr/local/src/tas2783 (copy of the repo's src/tas2783).
-# The CachyOS kernel is built with clang, hence LLVM=1.
+# The module is built with the same compiler as its kernel: LLVM=1 for
+# clang-built kernels (most CachyOS ones), plain gcc otherwise.
 
 SRC=/usr/local/src/tas2783
 
@@ -13,19 +14,29 @@ for moddir in /usr/lib/modules/*; do
 	kver=${moddir##*/}
 	# Skip leftover directories that no longer hold a real kernel.
 	[ -e "$moddir/vmlinuz" ] || continue
+	# The driver needs 7.2+ APIs; older kernels (e.g. 6.x LTS) keep the stock module.
+	kmajor=${kver%%.*}
+	kminor=${kver#*.}; kminor=${kminor%%.*}
+	if [ "$kmajor" -lt 7 ] || { [ "$kmajor" -eq 7 ] && [ "$kminor" -lt 2 ]; }; then
+		echo "tas2783: $kver is older than 7.2, not supported, skipping" >&2
+		continue
+	fi
 	if [ ! -e "$moddir/build/Makefile" ]; then
 		echo "tas2783: no headers for $kver, skipping" >&2
 		continue
 	fi
 	tmp=$(mktemp -d) || exit 1
 	cp "$SRC/tas2783-sdw.c" "$SRC/tas2783.h" "$SRC/Makefile" "$tmp/"
-	if make -C "$moddir/build" M="$tmp" LLVM=1 modules >/dev/null 2>&1; then
+	llvm=
+	grep -q '^CONFIG_CC_IS_CLANG=y' "$moddir/build/.config" 2>/dev/null && llvm=LLVM=1
+	log="/var/log/tas2783-build-$kver.log"
+	if make -C "$moddir/build" M="$tmp" $llvm modules >"$log" 2>&1; then
 		install -Dm644 "$tmp/snd-soc-tas2783-sdw.ko" \
 			"$moddir/updates/snd-soc-tas2783-sdw.ko"
 		depmod "$kver"
 		echo "tas2783: installed patched module for $kver"
 	else
-		echo "tas2783: build FAILED for $kver - stock module (mono mix) stays active" >&2
+		echo "tas2783: build FAILED for $kver - stock module (mono mix) stays active (see $log)" >&2
 	fi
 	rm -rf "$tmp"
 done

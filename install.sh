@@ -97,7 +97,7 @@ step0_prerequisites() {
       sudo pacman -S linux-cachyos-rc-headers"
     ok "kernel headers present"
 
-    # LLVM=1: CachyOS kernels are clang-built, so the module must be too.
+    # clang/lld: most CachyOS kernels are clang-built, so the module must be too.
     local tool
     for tool in make clang ld.lld llvm-objcopy; do
         command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
@@ -296,7 +296,10 @@ step2_firmware() {
 step3_module() {
     step "Step 3: building and installing the patched module"
 
-    make -C "$MODDIR/build" M="$REPO_DIR/src/tas2783" LLVM=1 modules
+    # Build with the same compiler as the kernel (clang on most CachyOS kernels).
+    local llvm=()
+    grep -q '^CONFIG_CC_IS_CLANG=y' "$MODDIR/build/.config" && llvm=(LLVM=1)
+    make -C "$MODDIR/build" M="$REPO_DIR/src/tas2783" "${llvm[@]}" modules
     sudo install -Dm644 "$REPO_DIR/src/tas2783/$MODULE" "$MODDIR/updates/$MODULE"
     sudo depmod "$KVER"
     ok "installed to $MODDIR/updates/$MODULE"

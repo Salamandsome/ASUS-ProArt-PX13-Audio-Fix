@@ -19,6 +19,7 @@
 #include <linux/firmware.h>
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/version.h>
 #include <sound/pcm_params.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
@@ -1343,7 +1344,12 @@ static s32 tas_sdw_probe(struct sdw_slave *peripheral,
 		function_data->desc = &peripheral->sdca_data.function[i];
 
 		/* Parse the function */
+		/* 7.3 dropped the sdw_slave argument. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
+		ret = sdca_parse_function(dev, function_data);
+#else
 		ret = sdca_parse_function(dev, peripheral, function_data);
+#endif
 		if (!ret)
 			tas_dev->sa_func_data = function_data;
 		else

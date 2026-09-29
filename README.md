@@ -68,8 +68,9 @@ pacman -Q alsa-ucm-conf        # must be 1.2.16 or newer
 ```
 
 Install the build toolchain and the headers **for the kernel you are running**.
-CachyOS kernels are clang-built, so clang, llvm and lld are required rather than
-gcc. The headers package name must match your kernel package
+CachyOS kernels are normally clang-built, so clang, llvm and lld are required
+(the build uses whichever compiler your kernel was built with). The headers
+package name must match your kernel package
 (`linux-cachyos-headers`, `linux-cachyos-rc-headers`, `linux-cachyos-lts-headers`, ...):
 
 ```fish
