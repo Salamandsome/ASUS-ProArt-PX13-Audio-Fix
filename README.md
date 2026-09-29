@@ -124,6 +124,11 @@ sudo depmod $(uname -r)
 `depmod` prefers `updates/` over the in-tree module, so the patched one wins from
 the next boot on. The build takes a few seconds and should produce no warnings.
 
+`LLVM=1` is for clang-built kernels, which CachyOS kernels normally are. If
+`grep CONFIG_CC_IS_CLANG=y /usr/lib/modules/$(uname -r)/build/.config` prints
+nothing, your kernel is gcc-built: drop `LLVM=1`. `install.sh` and the rebuild
+hook make this choice automatically.
+
 ## Step 4: Install the UCM config
 
 ```fish
@@ -171,8 +176,11 @@ sudo install -Dm644 install/root/etc/pacman.d/hooks/99-tas2783-module.hook \
 
 The hook runs `/usr/local/bin/tas2783-module-rebuild`, which builds from
 `/usr/local/src/tas2783` (not from this repo clone, so the clone can be deleted
-or moved afterwards). If a future kernel breaks the build, the script warns and
-exits 0 so the pacman transaction still succeeds; audio falls back to mono.
+or moved afterwards). Kernels older than 7.2 are skipped, since the driver
+cannot build against them. If a future kernel breaks the build, the script warns
+and exits 0 so the pacman transaction still succeeds; audio falls back to mono.
+The compiler output for each kernel is kept in
+`/var/log/tas2783-build-<kernel version>.log`.
 
 You can run it by hand at any time:
 
