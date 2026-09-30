@@ -914,7 +914,7 @@ the codec's idle power. It must act at boot: once the codec has suspended on
 the rule has not taken effect. Remove the rule once a 7.3 kernel resumes the
 RT721 again.
 
-This also covers the loading check the previous entry left open: on 7.3.0-rc4
-with the rule, the patched module loads, and both the Speakers and Headphones
-sinks are present. Sound plays, but a per-channel listening test (`--check`) on
-7.3 has not been run yet.
+This also closes the loading and listening checks the previous entry left open:
+on 7.3.0-rc4 with the rule, the patched module loads, both the Speakers and
+Headphones sinks are present, and `./install.sh --check` passed on 2026-09-30,
+left channel from the left speaker and right from the right.
