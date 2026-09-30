@@ -1,9 +1,11 @@
 # Rebuild the patched TAS2783 SoundWire module whenever a kernel or its
-# headers are installed/upgraded, so the stereo fix survives kernel updates.
+# headers are installed/upgraded, so the stereo fix survives kernel updates,
+# and clean the module out of the directory a removed kernel leaves behind.
 # Install to /etc/pacman.d/hooks/99-tas2783-module.hook
 [Trigger]
 Operation = Install
 Operation = Upgrade
+Operation = Remove
 Type = Path
 Target = usr/lib/modules/*/vmlinuz
 Target = usr/lib/modules/*/build/Makefile

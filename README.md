@@ -45,9 +45,9 @@ The `install/` tree mirrors where its files land: everything under
 |---|---|
 | `install/root/usr/share/alsa/ucm2/sof-soundwire/tas2783.conf` | Defines the Speaker device, sets posture 1 (left) / 4 (right) |
 | `install/root/etc/udev/rules.d/99-rt721-no-runtime-pm.rules` | Keeps the RT721 headset codec awake so 7.3 kernels keep the HiFi profile |
-| `install/root/usr/local/bin/tas2783-module-rebuild` | Rebuilds the module for every installed kernel |
+| `install/root/usr/local/bin/tas2783-module-rebuild` | Rebuilds the module for every installed kernel, removes it for uninstalled ones |
 | `install/root/usr/local/bin/tas2783-bus-reset` | Cycles the card profile to repair the SoundWire transport |
-| `install/root/etc/pacman.d/hooks/99-tas2783-module.hook` | Runs the rebuild after each kernel or headers upgrade |
+| `install/root/etc/pacman.d/hooks/99-tas2783-module.hook` | Runs the rebuild after each kernel or headers install, upgrade or removal |
 | `install/home/.config/wireplumber/wireplumber.conf.d/51-strix-halo-audio.conf` | Pins the card to the UCM-backed HiFi profile |
 | `install/home/.config/systemd/user/fix-sdw-speakers.service` | Runs the bus reset once per boot; only with `--with-bus-reset` |
 
@@ -180,8 +180,10 @@ sed -i '/platform-amd_sdw/d' ~/.local/state/wireplumber/default-routes
 A kernel package upgrade installs the new kernel into its own
 `/usr/lib/modules/<kver>/` directory, which has no `updates/`, silently
 reverting the machine to mono. This hook rebuilds and installs the module after
-every kernel or headers upgrade, for every installed kernel that has headers
-available.
+every kernel or headers install or upgrade, for every installed kernel that has
+headers available. It also runs when a kernel is removed: pacman does not own the
+module, so it would otherwise leave the old directory behind with the module
+still in it. The hook removes the module and, once empty, the directory.
 
 ```fish
 sudo install -Dm644 -t /usr/local/src/tas2783 \

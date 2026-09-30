@@ -12,8 +12,17 @@ SRC=/usr/local/src/tas2783
 
 for moddir in /usr/lib/modules/*; do
 	kver=${moddir##*/}
-	# Skip leftover directories that no longer hold a real kernel.
-	[ -e "$moddir/vmlinuz" ] || continue
+	# A removed kernel leaves its directory behind if our module is still
+	# in it, since pacman does not own the module. Take the module out and
+	# the directory with it; rmdir refuses if anything else is in there.
+	if [ ! -e "$moddir/vmlinuz" ]; then
+		if [ -e "$moddir/updates/snd-soc-tas2783-sdw.ko" ]; then
+			rm -f "$moddir/updates/snd-soc-tas2783-sdw.ko" "/var/log/tas2783-build-$kver.log"
+			rmdir "$moddir/updates" "$moddir" 2>/dev/null
+			echo "tas2783: removed patched module left behind by uninstalled kernel $kver"
+		fi
+		continue
+	fi
 	# The driver needs 7.2+ APIs; older kernels (e.g. 6.x LTS) keep the stock module.
 	kmajor=${kver%%.*}
 	kminor=${kver#*.}; kminor=${kminor%%.*}
