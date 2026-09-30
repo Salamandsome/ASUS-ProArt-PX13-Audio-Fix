@@ -858,3 +858,63 @@ Fixes, same day:
 
 Verified: the module builds against 7.2.8 and 7.3.0-rc4. Loading it and a
 listening test on 7.3 were still to be done at the time of writing.
+
+## 2026-09-29 speakers missing on 7.3: RT721 never resumes from runtime suspend
+
+With the patched module built and loaded on 7.3.0-rc4, PipeWire offered only
+"Dummy Output". The amd_sdw card had only the `off` profile. The install itself
+checked out: the loaded module's srcversion matched the patched .ko, UCM parsed
+(`alsaucm -c hw:1 dump text` listed Speaker, Headphones, Headset and Mic), and
+`aplay -D hw:1,2` played to the speakers.
+
+The kernel log had this on every 7.3 boot, including boots before the install:
+
+    rt721-sdca sdw:0:1:025d:0721:01: ASoC error (-61): at snd_soc_pcm_component_pm_runtime_get()
+    SDW1-PIN0-PLAYBACK-SimpleJack: ASoC error (-61): at __soc_pcm_open()
+
+`spa-acp-tool -vvvv -c 1 info` runs PipeWire's card probe. It showed how that
+error takes out the speakers:
+
+    ALSA device open '_ucm0001.hw:amdsoundwire,2' playback     <- Speaker, fine
+    Error opening PCM device _ucm0001.hw:amdsoundwire: No data available
+    Profile 'HiFi' mapping 'HiFi: Headphones: sink': output PCM open failed
+    Profile HiFi not supported
+
+ACP marks a whole profile unsupported when any one output mapping fails to open.
+The Headphones PCM is opened whether or not headphones are plugged in, so the
+failure was invisible except as missing speakers.
+
+The RT721 itself: `runtime_active_time` was 21 s against about 8865 s suspended.
+It autosuspended shortly after boot (3 s delay) and never came back. Writing `on`
+to `power/control` at runtime did not wake it. The status stayed `suspended`,
+`hw:1,0` still failed, and the driver logged nothing. On SoundWire, -ENODATA is
+what a transfer returns when the peripheral ignores the command, so the codec
+appears not to answer after its suspend. That reading comes from the error code,
+not from the driver source.
+
+Tests, all on the same day:
+
+| Kernel | udev rule (`control=on` at add) | RT721 suspends at boot | Resumes | Speakers |
+|---|---|---|---|---|
+| 7.3.0-rc4 | yes | no | n/a | yes |
+| 7.3.0-rc4 | no (reboot test) | yes (7.5 s) | no, -61 | no (Dummy Output) |
+| 7.2.8 | no (runtime toggle, two cycles) | yes | yes | yes |
+| 7.2.8 | no (cold boot) | yes (10.6 s) | yes | yes |
+
+So the resume failure is a 7.3-rc regression, independent of this repo. It
+resembles the s2idle failure logged on 2026-07-19, which also left the codecs
+unresponsive with -61 on 7.2, but that one needed a full system sleep.
+
+Fix: `install/root/etc/udev/rules.d/99-rt721-no-runtime-pm.rules` sets
+`power/control=on` when the RT721 appears, before its first autosuspend. It
+installs in step 4 on every kernel, because several kernels share one `/etc` and
+udev rules cannot easily check the kernel version, and on 7.2 the only cost is
+the codec's idle power. It must act at boot: once the codec has suspended on
+7.3, only a reboot helps. `--check` now says so when the profile is missing and
+the rule has not taken effect. Remove the rule once a 7.3 kernel resumes the
+RT721 again.
+
+This also covers the loading check the previous entry left open: on 7.3.0-rc4
+with the rule, the patched module loads, and both the Speakers and Headphones
+sinks are present. Sound plays, but a per-channel listening test (`--check`) on
+7.3 has not been run yet.

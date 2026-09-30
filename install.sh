@@ -305,11 +305,17 @@ step3_module() {
     ok "installed to $MODDIR/updates/$MODULE"
 }
 
-# Step 4: the UCM file that actually assigns left and right.
+# Step 4: the UCM file that actually assigns left and right, and the udev rule
+# without which 7.3 kernels drop the HiFi profile that UCM file lives in.
 step4_ucm() {
-    step "Step 4: installing the UCM config"
+    step "Step 4: installing the UCM config and the RT721 udev rule"
 
     overlay_install install/root/usr/share/alsa/ucm2/sof-soundwire/tas2783.conf
+    overlay_install install/root/etc/udev/rules.d/99-rt721-no-runtime-pm.rules
+    # The rule has to act before the codec's first suspend, a few seconds into
+    # boot. Once suspended it cannot be woken on 7.3, so there is nothing to
+    # apply it to now.
+    info "The udev rule takes effect from the next boot."
 }
 
 # Step 5: per-user WirePlumber config. No sudo here on purpose.
@@ -497,6 +503,14 @@ step9_verify() {
             ok "card is on the HiFi profile"
         else
             fail "card profile is ${profile:-not found}, expected HiFi (UCM devices will be missing)"
+            # The 7.3 RT721 resume failure looks exactly like this, so name it
+            # when the rule that prevents it has not taken effect this boot.
+            local rt721
+            for rt721 in /sys/bus/soundwire/devices/sdw:*:025d:0721:*/power/control; do
+                if [ -r "$rt721" ] && [ "$(cat "$rt721")" != on ]; then
+                    info "the RT721 udev rule is not active this boot; reboot so it applies"
+                fi
+            done
             failed=1
         fi
     fi

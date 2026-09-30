@@ -34,6 +34,7 @@ copy-pasteable fish, run from the repo root, and are idempotent.
 - 2026-07-18 - channel selection traced to the PPU21 posture register
 - 2026-08-03 - patched module plus UCM config, both speakers correct
 - 2026-08-04 - boot-time bus reset, install scripted
+- 2026-09-29 - builds on 7.3; udev rule works around a 7.3-rc RT721 regression
 
 ## What gets installed
 
@@ -43,6 +44,7 @@ The `install/` tree mirrors where its files land: everything under
 | File | Purpose |
 |---|---|
 | `install/root/usr/share/alsa/ucm2/sof-soundwire/tas2783.conf` | Defines the Speaker device, sets posture 1 (left) / 4 (right) |
+| `install/root/etc/udev/rules.d/99-rt721-no-runtime-pm.rules` | Keeps the RT721 headset codec awake so 7.3 kernels keep the HiFi profile |
 | `install/root/usr/local/bin/tas2783-module-rebuild` | Rebuilds the module for every installed kernel |
 | `install/root/usr/local/bin/tas2783-bus-reset` | Cycles the card profile to repair the SoundWire transport |
 | `install/root/etc/pacman.d/hooks/99-tas2783-module.hook` | Runs the rebuild after each kernel or headers upgrade |
@@ -129,16 +131,28 @@ the next boot on. The build takes a few seconds and should produce no warnings.
 nothing, your kernel is gcc-built: drop `LLVM=1`. `install.sh` and the rebuild
 hook make this choice automatically.
 
-## Step 4: Install the UCM config
+## Step 4: Install the UCM config and the RT721 udev rule
 
 ```fish
 sudo install -Dm644 install/root/usr/share/alsa/ucm2/sof-soundwire/tas2783.conf \
   /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf
+sudo install -Dm644 install/root/etc/udev/rules.d/99-rt721-no-runtime-pm.rules \
+  /etc/udev/rules.d/99-rt721-no-runtime-pm.rules
 ```
 
-This is the file that actually assigns left and right: its EnableSequence writes
+The UCM file is the one that actually assigns left and right: its EnableSequence writes
 DSP posture 1 to amp 1 and posture 4 to amp 2, guarded by a `ControlExists`
 condition so a stock (unpatched) module degrades to mono rather than failing.
+
+The udev rule works around a 7.3-rc kernel regression that has nothing to do
+with the amps. The RT721, which handles the headphone jack and headset mic,
+powers down a few seconds after boot when idle, and on 7.3 it never wakes up
+again. PipeWire opens every device in the HiFi profile when it probes the
+card, headphones included whether or not any are plugged in. One device that
+fails to open makes it drop the whole profile, so the speakers disappear and
+only "Dummy Output" is left. The rule stops the RT721 from powering down. 7.2
+does not need it, but it is harmless there. The rule acts at boot, so it takes
+effect after the reboot in step 8.
 
 ## Step 5: Install the WirePlumber config
 
@@ -279,6 +293,7 @@ systemctl --user disable --now fix-sdw-speakers.service
 rm -f ~/.config/systemd/user/fix-sdw-speakers.service
 systemctl --user daemon-reload
 sudo rm -f /etc/pacman.d/hooks/99-tas2783-module.hook \
+           /etc/udev/rules.d/99-rt721-no-runtime-pm.rules \
            /usr/local/bin/tas2783-module-rebuild \
            /usr/local/bin/tas2783-bus-reset \
            /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf \
@@ -303,6 +318,12 @@ speakers depending on your alsa-ucm-conf version.
   `--check` to report the postures as 1 and 1 rather than 1 and 4: the codecs
   lose their state along with the bus. That is the suspend bug rather than a
   broken install, and only a reboot recovers it.
+- **On 7.3-rc kernels the speakers vanish without the step 4 udev rule**, leaving
+  only "Dummy Output". The RT721 headset codec never wakes up after its first
+  power-down, and PipeWire drops the whole HiFi profile, speakers included. The
+  kernel log shows `rt721-sdca ... ASoC error (-61)`. This is a kernel
+  regression: 7.2.8 is fine without the rule. It affects the stock driver too,
+  and the rule can go once a 7.3 kernel fixes it.
 - **48 kHz / 16-bit playback only**, a limit of the AMD ACP70 SoundWire driver.
 - **The patched module is a stopgap.** The real fix belongs in
   `sound/soc/sdca/sdca_functions.c` so the firmware's own init tables get

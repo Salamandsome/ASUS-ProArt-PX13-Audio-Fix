@@ -1,0 +1,9 @@
+# Keep the RT721 headset codec out of runtime suspend.
+#
+# On 7.3-rc kernels the RT721 never resumes after its first runtime suspend
+# (-ENODATA). PipeWire then fails to open the Headphones PCM, marks the whole
+# HiFi profile unsupported, and the speakers disappear along with it. 7.2
+# resumes fine and pays only the codec's idle power for this rule. Remove it
+# once a 7.3 kernel fixes the regression. See docs/investigation-log.md,
+# 2026-09-29.
+ACTION=="add", SUBSYSTEM=="soundwire", KERNEL=="sdw:*:025d:0721:*", ATTR{power/control}="on"
