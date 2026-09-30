@@ -199,6 +199,43 @@ The failure covers every device on the bus and predates this repo's changes, so
 it sits in the platform's SoundWire suspend and resume path rather than in the
 codec driver or in this fix. Unresolved.
 
+## RT721 runtime resume on 7.3
+
+### Observations
+
+On kernel 7.3.0-rc4, at every boot, PipeWire offered only "Dummy Output" and
+the card had no HiFi profile. The kernel logged, once per probe:
+
+```
+rt721-sdca sdw:0:1:025d:0721:01: ASoC error (-61): at snd_soc_pcm_component_pm_runtime_get()
+SDW1-PIN0-PLAYBACK-SimpleJack: ASoC error (-61): at __soc_pcm_open()
+```
+
+The RT721 entered runtime suspend a few seconds after boot and never left it:
+`power/runtime_status` stayed `suspended`, opening `hw:1,0` returned
+`-ENODATA`, and writing `on` to `power/control` afterwards did not wake it.
+The speaker PCM (`hw:1,2`) opened and played throughout.
+
+`spa-acp-tool -vvvv -c 1 info`, which runs PipeWire's card probe, showed the
+link to the speakers: the Speaker mapping opened, the Headphones mapping
+failed with "No data available", and ACP reported "Profile HiFi not
+supported". One failed output mapping disqualifies the whole profile.
+
+With a udev rule setting `power/control=on` when the device appears, before
+its first autosuspend, the RT721 stayed active and both sinks were present.
+Removing the rule and rebooting brought the failure back. On 7.2.8 without the
+rule the RT721 suspended and resumed cleanly, both from a cold boot and across
+two forced cycles. All four tests on 2026-09-29.
+
+### Conclusion
+
+A 7.3-rc regression in the RT721 or AMD SoundWire runtime power path, not in
+the amps or in this fix, and one that hides the speakers only because ACP
+probes the headphone PCM whether or not anything is plugged in. The udev rule
+in `install/` prevents the first suspend; it costs the codec's idle power and
+can be dropped once a 7.3 kernel resumes the RT721 again. Details in
+[investigation-log.md](investigation-log.md), 2026-09-29.
+
 ## Device map
 
 | Plasma name | PipeWire node | Hardware |
@@ -215,6 +252,7 @@ the matching `alsa_input.` form. The PCI address differs between units.
 ## Limitations
 
 - Suspend and resume, as above.
+- On 7.3-rc kernels the RT721 must be kept out of runtime suspend, as above.
 - 16-bit 48 kHz output only. The TAS2783 supports up to 32-bit 96 kHz, but the
   AMD ACP70 SoundWire driver in `sound/soc/amd` is fixed at 48 kHz for SmartAmp
   playback.

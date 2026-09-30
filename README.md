@@ -177,9 +177,11 @@ sed -i '/platform-amd_sdw/d' ~/.local/state/wireplumber/default-routes
 
 ## Step 6: Install the rebuild hook
 
-A kernel package upgrade wipes `updates/`, silently reverting the machine to
-mono. This hook rebuilds and reinstalls the module after every kernel or headers
-upgrade, for every installed kernel that has headers available.
+A kernel package upgrade installs the new kernel into its own
+`/usr/lib/modules/<kver>/` directory, which has no `updates/`, silently
+reverting the machine to mono. This hook rebuilds and installs the module after
+every kernel or headers upgrade, for every installed kernel that has headers
+available.
 
 ```fish
 sudo install -Dm644 -t /usr/local/src/tas2783 \

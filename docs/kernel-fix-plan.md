@@ -71,8 +71,10 @@ sudo install -Dm644 snd-soc-sdca.ko /usr/lib/modules/$(uname -r)/updates/snd-soc
 sudo depmod $(uname -r)
 ```
 
-`LLVM=1` is required: CachyOS kernels are clang-built, and a gcc build produces
-a module the kernel will refuse.
+Build with the same compiler as the kernel: `LLVM=1` for clang-built kernels,
+which most CachyOS kernels are, and without it for gcc-built ones
+(`grep CONFIG_CC_IS_CLANG=y /usr/lib/modules/$(uname -r)/build/.config` tells
+them apart). A module built with the other compiler may fail to load.
 
 ### Testing it
 
