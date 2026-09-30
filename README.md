@@ -85,8 +85,10 @@ Confirm the headers match the running kernel; this path must exist:
 test -e /usr/lib/modules/$(uname -r)/build/Makefile; and echo "headers OK"
 ```
 
-Note: the module is unsigned and out of tree, so Secure Boot must be off (or the
-module signed yourself). Loading it taints the kernel, which is expected.
+Note: the module is unsigned and out of tree. CachyOS kernels load it even with
+Secure Boot on, and only taint the kernel. But kernels that lock down under
+Secure Boot, such as Fedora's and Ubuntu's, refuse it unless you sign the module
+yourself or turn Secure Boot off.
 
 ## Step 1: Clone the repo
 
