@@ -27,8 +27,9 @@ pcm4c  PDM mic array capture
 
 Each amp loads a calibration blob matched by unique ID (`1714-1-0x8.bin`,
 `1714-1-0xB.bin`), where `1714` is the ASUS subsystem ID. Since
-`linux-firmware` 20260622 these ship in `linux-firmware-other`, byte for byte
-identical to the ones inside the ASUS Windows driver.
+`linux-firmware` 20260622 these ship with it (now in the `linux-firmware-ti`
+split package), byte for byte identical to the ones inside the ASUS Windows
+driver.
 
 ## Channel selection
 

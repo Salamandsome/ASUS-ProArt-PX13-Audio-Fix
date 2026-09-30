@@ -60,9 +60,9 @@ Firmware is not installed by these steps: `linux-firmware` ships it now (see ste
 
 ## Step 0: Prerequisites
 
-Kernel **7.2 or newer** is required. Earlier kernels either lack the TAS2783
-SoundWire driver entirely (6.x) or lack the `spk:tas2783` CardComponents string
-that makes the UCM profile load (7.0, 7.1).
+Kernel **7.2 or newer** is required. 6.x kernels lack the kernel APIs the
+patched module is built against, and 7.0 and 7.1 lack the `spk:tas2783`
+CardComponents string that makes the UCM profile load.
 
 ```fish
 uname -r                       # must be 7.2 or newer
@@ -298,11 +298,15 @@ sudo rm -f /etc/pacman.d/hooks/99-tas2783-module.hook \
            /etc/udev/rules.d/99-rt721-no-runtime-pm.rules \
            /usr/local/bin/tas2783-module-rebuild \
            /usr/local/bin/tas2783-bus-reset \
-           /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf \
-           /usr/lib/modules/$(uname -r)/updates/snd-soc-tas2783-sdw.ko
+           /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf
 sudo rm -rf /usr/local/src/tas2783
+sudo find /var/log -maxdepth 1 -name 'tas2783-build-*.log' -delete
 rm -f ~/.config/wireplumber/wireplumber.conf.d/51-strix-halo-audio.conf
-sudo depmod $(uname -r)
+# the rebuild hook installs the module for every kernel, not just the running one
+for m in /usr/lib/modules/*/updates/snd-soc-tas2783-sdw.ko
+    sudo rm -f $m
+    sudo depmod (basename (dirname (dirname $m)))
+end
 reboot
 ```
 
@@ -365,9 +369,9 @@ blobs without installing anything:
 ./extract-firmware.sh SmartAMP_TI_DCH_TexasInstruments_Z_V6.3.1.15_47519.exe
 ```
 
-The script verifies SHA-256 checksums and prints the install commands. It writes
-the blobs under both names the driver tries, `1714-1-8.bin` in `/lib/firmware/`
-and in `/lib/firmware/ti/audio/tas2783/`.
+The script verifies SHA-256 checksums and writes the blobs to `./firmware/`. It
+then prints the commands that install them under both names the driver tries,
+`1714-1-8.bin` in `/lib/firmware/` and in `/lib/firmware/ti/audio/tas2783/`.
 
 ## Appendix B: Swapping the module without rebooting
 
@@ -385,4 +389,6 @@ sudo modprobe snd_acp_sdw_legacy_mach
 systemctl --user start pipewire.socket pipewire-pulse.socket wireplumber.service
 ```
 
-Then run the step 8 verification. If the postures do not apply, reboot instead.
+Then run the step 9 verification. If the postures do not apply, reboot instead.
+On 7.3 kernels this does not replace the reboot, because the step 4 udev rule
+only takes effect at boot.

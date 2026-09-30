@@ -2,7 +2,7 @@
 #
 # Extract TAS2783 firmware blobs from the ASUS SmartAMP driver installer.
 #
-# Dependencies: wrestool (icoutils), 7z (p7zip)
+# Dependencies: wrestool (icoutils), 7z (7zip)
 #
 # Usage:
 #   ./extract-firmware.sh SmartAMP_TI_DCH_TexasInstruments_Z_V6.3.1.15_47519.exe
@@ -27,7 +27,7 @@ source "$SYSTEM_CONF"
 
 # Check dependencies
 for cmd in wrestool 7z sha256sum; do
-    command -v "$cmd" >/dev/null 2>&1 || { echo "Error: $cmd not found. Install icoutils and p7zip." >&2; exit 1; }
+    command -v "$cmd" >/dev/null 2>&1 || { echo "Error: $cmd not found. Install icoutils and 7zip." >&2; exit 1; }
 done
 
 # Verify installer hash
