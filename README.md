@@ -13,7 +13,7 @@ is broken and why is in [docs/analysis.md](docs/analysis.md).
 ## Quick install
 
 ```fish
-git clone https://github.com/SaltCube/ASUS-ProArt-PX13-Audio-Fix.git
+git clone https://github.com/salamandsome/ASUS-ProArt-PX13-Audio-Fix.git
 cd ASUS-ProArt-PX13-Audio-Fix
 ./install.sh
 ./install.sh --check
@@ -93,7 +93,7 @@ yourself or turn Secure Boot off.
 ## Step 1: Clone the repo
 
 ```fish
-git clone https://github.com/SaltCube/ASUS-ProArt-PX13-Audio-Fix.git
+git clone https://github.com/salamandsome/ASUS-ProArt-PX13-Audio-Fix.git
 cd ASUS-ProArt-PX13-Audio-Fix
 ```
 
