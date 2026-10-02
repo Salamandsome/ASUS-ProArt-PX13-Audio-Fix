@@ -1,0 +1,17 @@
+[Unit]
+# After a system resume the codec driver re-runs its init sequence and sets
+# DSP posture 1 on both amps, so the right speaker plays the left channel.
+# UCM only writes postures 1 and 4 when the Speaker device is enabled, which
+# does not happen on resume. See /usr/local/bin/tas2783-posture-restore.
+#
+# A system unit, not a user one: it only needs amixer, and the user session
+# is frozen for part of the sleep cycle (docs/investigation-log.md, 2026-07-19).
+Description=Re-apply TAS2783 DSP postures after resume (stereo fix)
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tas2783-posture-restore
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

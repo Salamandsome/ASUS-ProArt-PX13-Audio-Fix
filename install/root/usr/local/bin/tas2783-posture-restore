@@ -1,0 +1,66 @@
+#!/bin/sh
+# Re-apply the TAS2783 DSP postures after a system resume.
+#
+# On resume the SoundWire bus re-enumerates, the codec driver sees the amps
+# re-attach and re-runs its init sequence, whose first write is posture 1 to
+# both amps. The UCM EnableSequence that sets 1 and 4 only runs when the
+# Speaker device is enabled, which does not happen on resume. Result: the
+# right speaker plays the left channel until something writes 4 back.
+#
+# This writes 1 to amp 1 and 4 to amp 2 through the kcontrols the patched
+# module adds, then checks a moment later that the values stuck, in case the
+# driver's init writes landed after ours. Root only, no PipeWire or user
+# session involved; run by tas2783-resume.service after suspend.target.
+# Safe to run by hand.
+#
+# With the stock module the kcontrols do not exist and this exits quietly.
+
+AMP1="name='tas2783-1 DSP Posture Select'"
+AMP2="name='tas2783-2 DSP Posture Select'"
+
+detect_card() {
+	for f in /proc/asound/card*/id; do
+		[ -r "$f" ] || continue
+		id=$(cat "$f")
+		case "$id" in
+			*soundwire*|*sdw*) echo "$id"; return 0 ;;
+		esac
+	done
+	return 1
+}
+
+read_posture() {
+	amixer -c "$card" cget "$1" 2>/dev/null | sed -n 's/.*: values=//p'
+}
+
+# The card is back before userspace thaws, but give it a moment anyway.
+i=0
+card=""
+while [ "$i" -lt 15 ]; do
+	card=$(detect_card) && [ -n "$(read_posture "$AMP2")" ] && break
+	card=""
+	i=$((i + 1))
+	sleep 1
+done
+
+if [ -z "$card" ]; then
+	echo "tas2783-posture-restore: no posture kcontrols found (stock module?), nothing to do" >&2
+	exit 0
+fi
+
+# Write, then confirm after a pause; retry a few times if the driver's own
+# init sequence overwrote us.
+i=0
+while [ "$i" -lt 5 ]; do
+	amixer -c "$card" cset "$AMP1" 1 >/dev/null 2>&1
+	amixer -c "$card" cset "$AMP2" 4 >/dev/null 2>&1
+	sleep 2
+	if [ "$(read_posture "$AMP1")" = "1" ] && [ "$(read_posture "$AMP2")" = "4" ]; then
+		echo "tas2783-posture-restore: postures set to 1 (amp 1) and 4 (amp 2)"
+		exit 0
+	fi
+	i=$((i + 1))
+done
+
+echo "tas2783-posture-restore: postures did not stick (amp 1 = $(read_posture "$AMP1"), amp 2 = $(read_posture "$AMP2"))" >&2
+exit 1

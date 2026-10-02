@@ -98,7 +98,10 @@ them apart). A module built with the other compiler may fail to load.
 If this misbehaves beyond quick iteration, the cheap alternative is to keep the
 current module and set the posture in the codec driver's fallback path directly:
 write posture 4 when `unique_id == 0xb` after `init_seq`. Three lines, robust,
-and a local hack rather than something upstreamable.
+and a local hack rather than something upstreamable. It would also make
+`tas2783-resume.service` unnecessary, since `init_seq` re-running on resume is
+what resets the postures (investigation log, 2026-10-02); either fix in the
+kernel covers boot and resume in one place.
 
 ## Upstreaming
 

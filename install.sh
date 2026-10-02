@@ -22,6 +22,7 @@ SYSTEM_CONF="$REPO_DIR/systems/HN7306EAC.conf"
 FIRMWARE_EXE=""   # set by --firmware, an installer the user already downloaded
 FIRMWARE_PROVENANCE=""   # "asus" if the vendor vouched for the installer hash
 WITH_BUS_RESET=0  # set by --with-bus-reset, installs the once-per-boot service
+WITH_RESUME_RESTORE=1  # cleared by --no-resume-restore, skips the after-resume unit
 
 if [ -t 1 ]; then
     BOLD=$(tput bold); RED=$(tput setaf 1); GREEN=$(tput setaf 2)
@@ -97,16 +98,23 @@ step0_prerequisites() {
       sudo pacman -S linux-cachyos-rc-headers"
     ok "kernel headers present"
 
-    # clang/lld: most CachyOS kernels are clang-built, so the module must be too.
-    local tool
-    for tool in make clang ld.lld llvm-objcopy; do
+    # The module must be built with the kernel's own compiler: clang/lld for
+    # clang-built kernels (most CachyOS ones), gcc otherwise. Only ask for the
+    # toolchain this kernel actually needs.
+    local tool tools pkgs
+    if grep -q '^CONFIG_CC_IS_CLANG=y' "$MODDIR/build/.config" 2>/dev/null; then
+        tools="make clang ld.lld llvm-objcopy"; pkgs="base-devel clang llvm lld"
+    else
+        tools="make gcc"; pkgs="base-devel"
+    fi
+    for tool in $tools; do
         command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
     done
     [ ${#missing[@]} -eq 0 ] ||
         die "missing build tools: ${missing[*]}
     Install them with:
-      sudo pacman -S --needed base-devel clang llvm lld"
-    ok "build toolchain present"
+      sudo pacman -S --needed $pkgs"
+    ok "build toolchain present (${tools#make })"
 
     # The UCM file lands in the sof-soundwire tree, which alsa-ucm-conf only
     # routes this card through from 1.2.16 on.
@@ -350,14 +358,45 @@ step6_hook() {
     info "The hook builds from $SRC_INSTALL_DIR, so this clone can be moved or deleted."
 }
 
-# Step 7: the bus reset. On some boots PipeWire's probe of the IV-sense
-# capture PCM leaves the transport with the second amp rendering nothing, and
-# cycling the card profile repairs it. The helper script always installs so
-# --check (and the user) can repair such a boot by hand; the once-per-boot
-# service is opt-in because the audible failure has proven rare and the
-# profile cycle makes the audio devices flicker at every login.
-step7_bus_reset() {
-    step "Step 7: installing the bus reset"
+# Step 7: the two repairs that run after the install is otherwise complete.
+#
+# Resume restore: after a system suspend the codec driver re-runs its init
+# sequence, which puts both amps back on posture 1, so the right speaker plays
+# the left channel. A root unit rewrites 1 and 4 after every resume. This
+# happens on every resume, so it installs by default; --no-resume-restore
+# skips it.
+#
+# Bus reset: on some boots PipeWire's probe of the IV-sense capture PCM leaves
+# the transport with the second amp rendering nothing, and cycling the card
+# profile repairs it. The helper script always installs so --check (and the
+# user) can repair such a boot by hand; the once-per-boot service is opt-in
+# because the audible failure has proven rare and the profile cycle makes the
+# audio devices flicker at every login.
+step7_repairs() {
+    step "Step 7: installing the resume restore and the bus reset"
+
+    if [ "$WITH_RESUME_RESTORE" -eq 1 ]; then
+        info "Installing the sleep/resume audio restore. After a suspend the kernel"
+        info "resets both amps to posture 1 and the right speaker plays the left"
+        info "channel; tas2783-resume.service rewrites the postures after every"
+        info "resume. Root unit, two amixer writes, no PipeWire involved."
+        info "Skip it with: ./install.sh --no-resume-restore"
+        overlay_install install/root/usr/local/bin/tas2783-posture-restore
+        overlay_install install/root/etc/systemd/system/tas2783-resume.service
+        sudo systemctl daemon-reload
+        sudo systemctl enable tas2783-resume.service >/dev/null 2>&1
+        ok "tas2783-resume.service enabled"
+    else
+        info "Resume restore skipped (--no-resume-restore). After each suspend,"
+        info "run tas2783-bus-reset if the right speaker plays the wrong channel."
+        if systemctl is-enabled tas2783-resume.service >/dev/null 2>&1; then
+            sudo systemctl disable tas2783-resume.service >/dev/null 2>&1
+            sudo rm -f "$(overlay_dest install/root/etc/systemd/system/tas2783-resume.service)" \
+                       "$(overlay_dest install/root/usr/local/bin/tas2783-posture-restore)"
+            sudo systemctl daemon-reload
+            ok "removed the previously installed tas2783-resume.service"
+        fi
+    fi
 
     overlay_install install/root/usr/local/bin/tas2783-bus-reset
 
@@ -513,6 +552,14 @@ step9_verify() {
             done
             failed=1
         fi
+    fi
+
+    # Default-on, but skippable, so its absence is a note rather than a failure.
+    if systemctl is-enabled tas2783-resume.service >/dev/null 2>&1; then
+        ok "resume posture restore enabled (tas2783-resume.service)"
+    else
+        info "resume posture restore not installed: the right speaker will play the"
+        info "left channel after every suspend (see README.md step 7)"
     fi
 
     # Optional, so its absence is not a failure; the listening test points at
@@ -679,6 +726,7 @@ do_uninstall() {
     step "Uninstalling"
 
     systemctl --user disable --now fix-sdw-speakers.service >/dev/null 2>&1 || true
+    sudo systemctl disable tas2783-resume.service >/dev/null 2>&1 || true
 
     # The overlay tree is the list of what was installed, so walking it is the
     # uninstall: no second list to keep in sync.
@@ -694,6 +742,7 @@ do_uninstall() {
     done < <(find "$REPO_DIR/install" -type f | sort)
 
     systemctl --user daemon-reload
+    sudo systemctl daemon-reload
     sudo rm -rf "$SRC_INSTALL_DIR"
     # Build logs the rebuild hook leaves behind, one per kernel.
     sudo rm -f /var/log/tas2783-build-*.log
@@ -730,7 +779,7 @@ do_install() {
     step4_ucm
     step5_wireplumber
     step6_hook
-    step7_bus_reset
+    step7_repairs
 
     # Reload failed: the stock module is still loaded, so a check here would
     # only report the install as broken.
@@ -772,6 +821,13 @@ Usage:
   ./install.sh --listen     the listening test on its own
   ./install.sh --uninstall  remove everything this script installs
 
+  --no-resume-restore       do not install tas2783-resume.service. By default
+                            the install enables this root unit, which rewrites
+                            the DSP postures after every suspend; without it
+                            the right speaker plays the left channel after
+                            each resume until a profile cycle. Re-running with
+                            this flag removes an already installed unit.
+
   --with-bus-reset          also install and enable a user service that runs
                             the bus reset once per boot. Optional: on rare
                             boots the right speaker comes up silent, and this
@@ -805,6 +861,7 @@ main() {
             --firmware=*)     FIRMWARE_EXE="${1#*=}" ;;
             --firmware-only)  action=firmware ;;
             --with-bus-reset) WITH_BUS_RESET=1 ;;
+            --no-resume-restore) WITH_RESUME_RESTORE=0 ;;
             -h|--help)        usage; exit 0 ;;
             *)                die "unknown option: $1 (try --help)" ;;
         esac

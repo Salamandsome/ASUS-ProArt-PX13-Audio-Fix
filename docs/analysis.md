@@ -197,7 +197,38 @@ the SoundWire stack before s2idle was tried as a workaround and hung the machine
 
 The failure covers every device on the bus and predates this repo's changes, so
 it sits in the platform's SoundWire suspend and resume path rather than in the
-codec driver or in this fix. Unresolved.
+codec driver or in this fix. Unresolved on 7.2-rc.
+
+### On 7.3.0-rc4 with the RT721 udev rule
+
+Observed 2026-10-02: nine s2idle cycles in one boot, every peripheral
+`Attached` afterwards, none of the 7.2 error signature in the kernel log. The
+only line per resume is `snd_pci_ps: ACP: MSI unexpectedly enabled after
+resume, disabling`, which the driver corrects itself. Audio worked after
+every wake, with two defects:
+
+1. **Both amps come back on posture 1**, so the right speaker plays the left
+   channel. Deterministic, and explained by the driver: on resume the bus
+   re-enumerates, `tas_update_status()` sees UNATTACHED then ATTACHED, clears
+   `hw_init`, and `tas_io_init()` re-runs `tas2783_init_seq`, whose first
+   entry is PPU21 PostureNumber = 1. UCM only writes 1 and 4 when the Speaker
+   device is enabled, which a resume does not do. The `DSP Posture Select`
+   controls read 1 and 1 afterwards and that is the real chip state. Writing
+   1 and 4 back through the kcontrols, with no profile cycle, restored stereo;
+   `tas2783-resume.service` does this after every resume.
+2. **On one wake amp 2 received nothing** (left channel from the left speaker
+   only, right channel silent) and the profile cycle repaired it: the same
+   intermittent transport fault seen at boot. The next wake did not show it.
+
+Not established: whether resume works because 7.3 fixed the platform path or
+because the udev rule keeps the RT721 runtime-active across the suspend. The
+rule is installed on every kernel, so a suspend on 7.2.8 would tell.
+
+Also seen that day: a card parked on profile `off`, with WirePlumber having
+saved `off` as the default. The timing matched a manual `tas2783-bus-reset`
+run, which at the time exited silently if the switch back to HiFi failed.
+WirePlumber persists whichever profile a card was last set to, so that failure
+mode outlives a reboot; the script now retries and reports instead.
 
 ## RT721 runtime resume on 7.3
 
@@ -251,7 +282,8 @@ the matching `alsa_input.` form. The PCI address differs between units.
 
 ## Limitations
 
-- Suspend and resume, as above.
+- Suspend and resume on 7.2-rc, as above. On 7.3.0-rc4 it works, with the
+  resume unit putting the postures back.
 - On 7.3-rc kernels the RT721 must be kept out of runtime suspend, as above.
 - 16-bit 48 kHz output only. The TAS2783 supports up to 32-bit 96 kHz, but the
   AMD ACP70 SoundWire driver in `sound/soc/amd` is fixed at 48 kHz for SmartAmp

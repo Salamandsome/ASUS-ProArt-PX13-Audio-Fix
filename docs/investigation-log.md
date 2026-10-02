@@ -14,6 +14,10 @@ that is still outstanding, read [kernel-fix-plan.md](kernel-fix-plan.md).
   to opt-in.
 - **2026-09-29**: rebuild hook failed on 7.3 and on a gcc-built LTS kernel;
   source and hook fixed.
+- **2026-09-29**: speakers missing on 7.3; RT721 never resumes from runtime
+  suspend, udev rule added.
+- **2026-10-02**: suspend and resume work on 7.3.0-rc4; the driver resets the
+  postures on resume, so a root unit rewrites them.
 
 Paths under `temp/` were scratch working files: kernel sources, ACPI decompiles
 and captured logs. That directory is gitignored and its contents are not part of
@@ -918,3 +922,78 @@ This also closes the loading and listening checks the previous entry left open:
 on 7.3.0-rc4 with the rule, the patched module loads, both the Speakers and
 Headphones sinks are present, and `./install.sh --check` passed on 2026-09-30,
 left channel from the left speaker and right from the right.
+
+## 2026-10-02 suspend and resume work on 7.3; the driver resets the postures
+
+The user reported that sleep no longer breaks audio. The journal for the
+running boot (7.3.0-rc4-1-cachyos-rc, RT721 udev rule active) showed four
+s2idle cycles already that day, all resumed, with none of the 2026-07-19
+signature: no `-110`, no UNATTACHED peripherals, no transport errors. The one
+kernel line per resume is `snd_pci_ps 0000:c4:00.5: ACP: MSI unexpectedly
+enabled after resume (flags=0x00f1), disabling`, and the driver carries on.
+
+The first guess, that the udev rule simply keeps the audio awake so there is
+nothing to resume, is wrong: the rule disables *runtime* autosuspend, for the
+RT721 only. System sleep is a separate path, all three peripherals went
+through it, and the amps are still on `power/control=auto`.
+
+Listening tests after the wakes, in order:
+
+1. After the fourth cycle: the `DSP Posture Select` controls read 1 and 1.
+   Left channel from the left speaker, right channel silent. `--listen` ran
+   the bus reset and the right channel came back; postures 1 and 4 again.
+2. A manual `tas2783-bus-reset` run shortly afterwards printed nothing. At
+   16:47:51 WirePlumber saved `amd_sdw=off` in
+   `~/.local/state/wireplumber/default-profile`. A suspend at 16:49 and a
+   listening test followed: both speakers silent, card profile `off`, default
+   sink `auto_null`, Spk switches off (UCM's DisableSequence). The `off` was
+   saved 84 s before the suspend, so the suspend did not do it; the script's
+   `pactl set-card-profile ... HiFi || exit 0` is the likely culprit, and
+   because WirePlumber persists the last profile set, the card would have
+   stayed off across reboots. `pactl set-card-profile ... HiFi` by hand
+   restored everything, postures included.
+3. From that known-good state, a suspend at 16:52 (three entry/exit pairs in
+   quick succession, a glitchy wake). Postures read 1 and 1. The "Front Left"
+   test came out of the right speaker; "Front Right" played nowhere. Writing
+   posture 1 to amp 1 and 4 to amp 2 with `amixer cset`, and nothing else,
+   restored correct stereo.
+
+Why the postures reset, from `src/tas2783/tas2783-sdw.c`: the system resume
+callback is `tas2783_sdca_dev_resume()`, which waits for the peripheral to
+initialise and syncs the regcache. The bus re-enumerates on resume, so
+`tas_update_status()` is called with UNATTACHED (clearing `hw_init`) and then
+ATTACHED, and with `hw_init` false it calls `tas_io_init()`, which runs
+`tas2783_init_seq`. Its first entry writes PPU21 PostureNumber = 0x01, on both
+amps. The regcache now holds 1 for both and so does the hardware. The UCM
+EnableSequence that writes 1 and 4 only runs when the Speaker device is
+enabled; a resume does not re-enable it. So after every resume amp 2 is on
+posture 1, rendering the left channel. The earlier 2026-08-05 observation
+("postures 1 and 1 after a suspend") was this same mechanism, hidden behind
+the dead bus.
+
+The silent right amp in test 1 is a different thing: on posture 1 it would
+have played the left test, and it played nothing. That is the intermittent
+transport fault from the boot-time entries, now also seen after a wake, and
+the profile cycle repairs it as before. Test 3 did not show it.
+
+Changes, same day:
+
+- `install/root/usr/local/bin/tas2783-posture-restore` and
+  `install/root/etc/systemd/system/tas2783-resume.service`: a root unit on
+  `suspend.target` (and the hibernate variants) that rewrites 1 and 4 through
+  the kcontrols after every resume, then checks they stuck. Root only, two
+  `amixer` writes, no PipeWire or user session, so none of the 2026-07-19
+  sleep-hook hazards. `install.sh` installs and enables it by default,
+  announces what it is doing, and `--no-resume-restore` skips or removes it.
+- `tas2783-bus-reset` no longer exits 0 when the switch back to HiFi fails:
+  it retries five times and then says, loudly, that the card is off.
+- `--check` reports whether the resume unit is enabled.
+
+Verified on the next wake, 17:13: the unit started one second after
+`PM: suspend exit`, logged `postures set to 1 (amp 1) and 4 (amp 2)` two
+seconds later, and the listening test passed with no profile cycle. Nine
+s2idle cycles that day in all, the bus intact after every one.
+
+Still open: whether resume works because 7.3 fixed the platform path or
+because the udev rule keeps the RT721 active across the suspend. A single
+suspend on 7.2.8, where the rule is also installed, would answer it.

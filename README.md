@@ -7,13 +7,14 @@ distributions.
 Out of the box the two TAS2783 SmartAmp speakers do not render separate
 channels: both play the same mix, or one plays and the other is silent. Fixing
 that takes a patched codec module and a UCM file that selects a channel per
-amp. An optional service works around a rarer boot-time fault (step 7). What
-is broken and why is in [docs/analysis.md](docs/analysis.md).
+amp. A small root unit re-applies the channel selection after every suspend,
+and an optional service works around a rarer boot-time fault (both step 7).
+What is broken and why is in [docs/analysis.md](docs/analysis.md).
 
 ## Quick install
 
 ```fish
-git clone https://github.com/salamandsome/ASUS-ProArt-PX13-Audio-Fix.git
+git clone https://github.com/Salamandsome/ASUS-ProArt-PX13-Audio-Fix.git
 cd ASUS-ProArt-PX13-Audio-Fix
 ./install.sh
 ./install.sh --check
@@ -35,6 +36,7 @@ copy-pasteable fish, run from the repo root, and are idempotent.
 - 2026-08-03 - patched module plus UCM config, both speakers correct
 - 2026-08-04 - boot-time bus reset, install scripted
 - 2026-09-29 - builds on 7.3; udev rule works around a 7.3-rc RT721 regression
+- 2026-10-02 - suspend/resume works on 7.3; resume unit restores the postures
 
 ## What gets installed
 
@@ -46,6 +48,8 @@ The `install/` tree mirrors where its files land: everything under
 | `install/root/usr/share/alsa/ucm2/sof-soundwire/tas2783.conf` | Defines the Speaker device, sets posture 1 (left) / 4 (right) |
 | `install/root/etc/udev/rules.d/99-rt721-no-runtime-pm.rules` | Keeps the RT721 headset codec awake so 7.3 kernels keep the HiFi profile |
 | `install/root/usr/local/bin/tas2783-module-rebuild` | Rebuilds the module for every installed kernel, removes it for uninstalled ones |
+| `install/root/usr/local/bin/tas2783-posture-restore` | Rewrites DSP posture 1 / 4 after a resume; the driver resets both amps to 1 |
+| `install/root/etc/systemd/system/tas2783-resume.service` | Runs the posture restore after every suspend; skipped with `--no-resume-restore` |
 | `install/root/usr/local/bin/tas2783-bus-reset` | Cycles the card profile to repair the SoundWire transport |
 | `install/root/etc/pacman.d/hooks/99-tas2783-module.hook` | Runs the rebuild after each kernel or headers install, upgrade or removal |
 | `install/home/.config/wireplumber/wireplumber.conf.d/51-strix-halo-audio.conf` | Pins the card to the UCM-backed HiFi profile |
@@ -93,7 +97,7 @@ yourself or turn Secure Boot off.
 ## Step 1: Clone the repo
 
 ```fish
-git clone https://github.com/salamandsome/ASUS-ProArt-PX13-Audio-Fix.git
+git clone https://github.com/Salamandsome/ASUS-ProArt-PX13-Audio-Fix.git
 cd ASUS-ProArt-PX13-Audio-Fix
 ```
 
@@ -208,7 +212,42 @@ You can run it by hand at any time:
 sudo /usr/local/bin/tas2783-module-rebuild
 ```
 
-## Step 7: The bus reset (optional service)
+## Step 7: The resume restore, and the bus reset (optional service)
+
+### Resume restore
+
+After a suspend the SoundWire bus re-enumerates and the codec driver re-runs
+its built-in init sequence, whose first write is DSP posture 1 to both amps.
+UCM only writes 1 and 4 when the Speaker device is enabled, which does not
+happen on resume, so until something writes the 4 back the right speaker plays
+the left channel. This is deterministic: it happens after every suspend.
+
+`tas2783-resume.service` is a root unit hooked to `suspend.target` that runs
+`tas2783-posture-restore` after each wake. The script waits for the amps,
+writes posture 1 to amp 1 and 4 to amp 2 through the kcontrols, and checks a
+moment later that the values stuck. It needs only `amixer`: no PipeWire, no
+user session, which matters because the user session is frozen for part of
+the sleep cycle. With the stock module the kcontrols do not exist and the
+script exits quietly.
+
+`./install.sh` installs and enables it by default, and says so while it does.
+To leave it out, or to remove an installed one, run `./install.sh
+--no-resume-restore`. By hand:
+
+```fish
+sudo install -Dm755 install/root/usr/local/bin/tas2783-posture-restore \
+  /usr/local/bin/tas2783-posture-restore
+sudo install -Dm644 install/root/etc/systemd/system/tas2783-resume.service \
+  /etc/systemd/system/tas2783-resume.service
+sudo systemctl daemon-reload
+sudo systemctl enable tas2783-resume.service
+```
+
+Suspend and resume themselves were broken at the platform level on 7.2-rc
+kernels (the whole bus died); on 7.3.0-rc4 with the step 4 udev rule in place
+they work, which is what made this unit worth having. See Known issues.
+
+### Bus reset
 
 On some boots the right speaker is silent even with everything above installed
 correctly. When PipeWire starts it probes every PCM on the card, including the
@@ -274,7 +313,9 @@ amixer -c amdsoundwire cget name='tas2783-2 DSP Posture Select'
 # 4. the amd_sdw card is on the HiFi profile, not pro-audio or off
 pactl list cards | grep -E 'Name: alsa_card|Active Profile'
 
-# 5. only if you installed the optional step 7 service: it ran this boot
+# 5. the resume restore is enabled (unless you chose --no-resume-restore), and
+#    only if you installed the optional step 7 service: it ran this boot
+systemctl is-enabled tas2783-resume.service
 systemctl --user status fix-sdw-speakers.service
 
 # 6. listen: "Front Left" from the left speaker only, then "Front Right" from
@@ -291,6 +332,10 @@ speaker actually makes sound.
   corruption. Run `/usr/local/bin/tas2783-bus-reset`; if that fixes it and it
   keeps happening, install the optional step 7 service:
   `./install.sh --with-bus-reset`.
+- **Both read 1 right after a suspend**, and the right speaker plays the left
+  channel: the resume restore did not run. Check
+  `systemctl status tas2783-resume.service`, or run
+  `sudo /usr/local/bin/tas2783-posture-restore` by hand.
 
 ## Uninstall
 
@@ -298,11 +343,15 @@ speaker actually makes sound.
 systemctl --user disable --now fix-sdw-speakers.service
 rm -f ~/.config/systemd/user/fix-sdw-speakers.service
 systemctl --user daemon-reload
+sudo systemctl disable tas2783-resume.service
 sudo rm -f /etc/pacman.d/hooks/99-tas2783-module.hook \
            /etc/udev/rules.d/99-rt721-no-runtime-pm.rules \
+           /etc/systemd/system/tas2783-resume.service \
            /usr/local/bin/tas2783-module-rebuild \
+           /usr/local/bin/tas2783-posture-restore \
            /usr/local/bin/tas2783-bus-reset \
            /usr/share/alsa/ucm2/sof-soundwire/tas2783.conf
+sudo systemctl daemon-reload
 sudo rm -rf /usr/local/src/tas2783
 sudo find /var/log -maxdepth 1 -name 'tas2783-build-*.log' -delete
 rm -f ~/.config/wireplumber/wireplumber.conf.d/51-strix-halo-audio.conf
@@ -319,15 +368,18 @@ speakers depending on your alsa-ucm-conf version.
 
 ## Known issues
 
-- **On rare boots the right speaker comes up silent** while every mixer
-  reading looks correct. Run `/usr/local/bin/tas2783-bus-reset`, or install
-  the optional once-per-boot service (step 7).
-- **Suspend/resume kills all SoundWire audio until reboot.** A platform-level
-  kernel bug, present with or without this fix and affecting the stock RT721
-  codec too. After a suspend, expect no audio from any device, and expect
-  `--check` to report the postures as 1 and 1 rather than 1 and 4: the codecs
-  lose their state along with the bus. That is the suspend bug rather than a
-  broken install, and only a reboot recovers it.
+- **On rare boots, and some resumes, the right speaker comes up silent** while
+  every mixer reading looks correct. Run `/usr/local/bin/tas2783-bus-reset`,
+  or install the optional once-per-boot service (step 7).
+- **Suspend/resume on 7.2-rc kernels kills all SoundWire audio until reboot.**
+  A platform-level kernel bug, present with or without this fix and affecting
+  the stock RT721 codec too; only a reboot recovers it. On 7.3.0-rc4 with the
+  step 4 udev rule the bus survives s2idle (verified over nine cycles on
+  2026-10-02), with two after-effects: the driver resets both amps to posture
+  1, which the step 7 resume unit repairs, and on some wakes the right amp
+  comes back receiving nothing, the same intermittent fault as at boot, which
+  `tas2783-bus-reset` repairs. Whether the rule or the kernel is what made
+  resume work is not yet known.
 - **On 7.3-rc kernels the speakers vanish without the step 4 udev rule**, leaving
   only "Dummy Output". The RT721 headset codec never wakes up after its first
   power-down, and PipeWire drops the whole HiFi profile, speakers included. The

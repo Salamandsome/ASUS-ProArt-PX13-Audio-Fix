@@ -40,8 +40,25 @@ profile=$(pactl list cards 2>/dev/null | awk -v want="$card" '
 	/Active Profile:/  { if (current == want) { print $3; exit } }')
 [ -n "$profile" ] && [ "$profile" != "off" ] || profile="HiFi"
 
-pactl set-card-profile "$card" off || exit 0
+if ! pactl set-card-profile "$card" off; then
+	echo "tas2783-bus-reset: could not set $card to off, nothing changed" >&2
+	exit 1
+fi
 sleep 2
-pactl set-card-profile "$card" "$profile" || exit 0
+
+# WirePlumber remembers whichever profile a card was last set to, across
+# reboots. If the switch back fails the card stays off, silently, until
+# someone sets a profile by hand; so retry, and if it still fails say so
+# loudly rather than exit 0 (which left a card parked on "off" once).
+i=0
+until pactl set-card-profile "$card" "$profile"; do
+	i=$((i + 1))
+	if [ "$i" -ge 5 ]; then
+		echo "tas2783-bus-reset: FAILED to set $card back to $profile; the card is OFF" >&2
+		echo "tas2783-bus-reset: fix with: pactl set-card-profile $card $profile" >&2
+		exit 1
+	fi
+	sleep 1
+done
 
 echo "tas2783-bus-reset: cycled $card through off -> $profile"
